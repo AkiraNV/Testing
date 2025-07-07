@@ -1,0 +1,11 @@
+# Điều khiển
+Di chuyển: mũi tên hoặc WASD
+Bắn: SPACE
+Tạm dừng: ESC
+
+# Kẻ địch
+Tránh đạn, tiêu diệt để ghi điểm
+
+# Mẹo
+Thu thập vật phẩm
+Giữ mạng sống quan trọng

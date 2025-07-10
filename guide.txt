@@ -1,0 +1,13 @@
+# Điều khiển
+Sử dụng các phím mũi tên để di chuyển
+Phím cách để bắn
+Shift để tăng tốc
+Di chuyển mượt mà theo chiều ngang và dọc
+Tránh đạn từ kẻ địch
+
+# Kẻ địch
+Kẻ địch xuất hiện theo đợt
+Một số địch có khả năng đặc biệt
+Chúng sẽ bắn về phía bạn
+Tránh chạm vào chúng
+Đánh bại tất cả để thắng

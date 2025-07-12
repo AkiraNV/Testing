@@ -31,13 +31,15 @@ Config.set('graphics', 'width', '720')
 Config.set('graphics', 'height', '640')
 Config.set('graphics', 'dpi', '96')
 
-# Thiết lập logging để chỉ xử lý lỗi
+# Thiết lập logging để debug
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
 # === INIT ===
 pygame.init()
-pygame.display.set_mode((1, 1), pygame.HIDDEN)
+# pygame.display.set_mode((1, 1), pygame.HIDDEN)
+if sys.platform in ('win32', 'linux'):
+    pygame.display.set_mode((1, 1), pygame.HIDDEN)
 Window.size = (720, 640)  # Đảm bảo kích thước cửa sổ
 texture_cache = {}
 movement_mode = ["mode1"]
@@ -48,22 +50,27 @@ try:
 except Exception as e:
     logger.error(f"Lỗi khi đăng ký font retro: {e}")
 
+
 # === Utility ===
 def surface_to_texture(surface, target_size=None):
     if not surface:
+        logger.warning("Surface is None in surface_to_texture")
         return None
     surface_id = id(surface)
     if surface_id not in texture_cache:
         try:
             # Lấy kích thước gốc
             width, height = surface.get_size()
+            logger.debug(f"surface_to_texture: Original surface size: ({width}, {height})")
 
             # Nếu target_size được chỉ định, scale surface
             if target_size:
                 surface = pygame.transform.smoothscale(surface, target_size)
                 width, height = target_size
+                logger.debug(f"surface_to_texture: Scaled surface to: ({width}, {height})")
 
             buffer = pygame.image.tostring(surface, "RGBA", False)
+            logger.debug(f"surface_to_texture: Buffer length: {len(buffer)}")
             texture = Texture.create(size=(width, height), colorfmt='rgba')
             texture.blit_buffer(buffer, colorfmt='rgba', bufferfmt='ubyte')
             texture.flip_vertical()
@@ -73,10 +80,12 @@ def surface_to_texture(surface, target_size=None):
             return None
     return texture_cache[surface_id]
 
+
 # === Background ===
 class Background(Widget):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        logger.debug(f"Kích thước cửa sổ: {Window.size}")
         self.width = Window.width
         self.image_height = 1080
         self.speed = 2
@@ -127,6 +136,7 @@ class Background(Widget):
         self.rect2.pos = (0, self.y2)
         self.bg_rect.size = (Window.width, Window.height)
 
+
 # === ShipWidget ===
 class ShipWidget(Widget):
     def __init__(self, ship, **kwargs):
@@ -141,17 +151,41 @@ class ShipWidget(Widget):
             self.rect = Rectangle(texture=self.texture, pos=self.pos, size=self.size) if self.texture else None
 
     def update(self, dt):
+        # 1) Cập nhật logic (di chuyển X, xử lý va chạm, v.v.)
         self.ship.update()
+
+        # 2) Đọc phím để update display_y và display_x
         keys = pygame.key.get_pressed()
+        # W hoặc UP: giảm y → đi lên; S hoặc DOWN: tăng y → đi xuống
         if keys[pygame.K_w] or keys[pygame.K_UP]:
             self.display_y = min(Window.height - self.size[1], self.display_y + self.ship.speed)
         elif keys[pygame.K_s] or keys[pygame.K_DOWN]:
             self.display_y = max(0, self.display_y - self.ship.speed)
+
+        # A hoặc LEFT: giảm x → đi trái; D hoặc RIGHT: tăng x → đi phải
+        if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+            self.ship.rect.x -= self.ship.speed
+        elif keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+            self.ship.rect.x += self.ship.speed
+
+        # 3) Xử lý wrap-around cho trục X
+        if self.ship.rect.x < 0:
+            self.ship.rect.x += Window.width  # Xuất hiện ở biên phải
+        elif self.ship.rect.x > Window.width - self.size[0]:
+            self.ship.rect.x -= Window.width  # Xuất hiện ở biên trái
+
+        # 4) Gán lại rect.y để giữ logic đồng bộ
         self.ship.rect.y = self.display_y
+
+        # 5) Cập nhật vị trí để vẽ
         self.pos = (self.ship.rect.x, self.display_y)
+
+        # 6) Cập nhật texture nếu image thay đổi
         if self.ship.image != self.last_image:
             self.last_image = self.ship.image
             self.texture = surface_to_texture(self.ship.image)
+
+        # 7) Vẽ lại canvas
         self.canvas.clear()
         with self.canvas:
             if self.texture:
@@ -159,7 +193,9 @@ class ShipWidget(Widget):
 
     def on_size(self, instance, value):
         if value != (32, 32):
+            logger.warning(f"ShipWidget size changed to: {value}, resetting to (32, 32)")
             self.size = (32, 32)
+
 
 # === EnemyWidget ===
 class EnemyWidget(Widget):
@@ -184,12 +220,14 @@ class EnemyWidget(Widget):
         self.texture = self.textures[self.frame_index] if self.textures else None
         with self.canvas:
             self.rect = Rectangle(texture=self.texture, pos=self.pos, size=self.size) if self.texture else None
+        logger.debug(f"EnemyWidget initialized at pos: {self.pos}, size: {self.size}")
 
     def update(self, dt):
         try:
             self.enemy.update()
             self.pos = (self.enemy.rect.x, self.enemy.rect.y)
             if self.size != (32, 32):
+                logger.warning(f"EnemyWidget size changed unexpectedly to: {self.size}")
                 self.size = (32, 32)
             self.last_update += dt
             if self.textures and self.last_update >= self.animation_speed:
@@ -200,12 +238,17 @@ class EnemyWidget(Widget):
             with self.canvas:
                 if self.texture:
                     self.rect = Rectangle(texture=self.texture, pos=self.pos, size=self.size)
+                else:
+                    logger.warning("No texture for EnemyWidget")
+            logger.debug(f"EnemyWidget updated at pos: {self.pos}, size: {self.size}")
         except Exception as e:
             logger.error(f"Lỗi trong EnemyWidget.update: {e}")
 
     def on_size(self, instance, value):
         if value != (32, 32):
+            logger.warning(f"EnemyWidget size changed to: {value}, resetting to (32, 32)")
             self.size = (32, 32)
+
 
 # === ProjectileWidget ===
 class ProjectileWidget(Widget):
@@ -215,58 +258,66 @@ class ProjectileWidget(Widget):
         self.size = (16, 16)
         self.size_hint = (None, None)
         self.pos = (projectile.rect.x, projectile.rect.y)
-        self.texture = surface_to_texture(self.projectile.image, target_size=(16, 16)) if self.projectile.image else None
+        self.texture = surface_to_texture(self.projectile.image,
+                                          target_size=(16, 16)) if self.projectile.image else None
         with self.canvas:
             self.rect = Rectangle(texture=self.texture, pos=self.pos, size=self.size) if self.texture else None
+        logger.debug(f"ProjectileWidget initialized at pos: {self.pos}, size: {self.size}")
 
     def update(self, dt):
         try:
             self.projectile.update()
             self.pos = (self.projectile.rect.x, self.projectile.rect.y)
             if self.size != (16, 16):
+                logger.warning(f"ProjectileWidget size changed unexpectedly to: {self.size}")
                 self.size = (16, 16)
             self.canvas.clear()
             with self.canvas:
                 if self.texture:
                     self.rect = Rectangle(texture=self.texture, pos=self.pos, size=self.size)
+                else:
+                    logger.warning("No texture for ProjectileWidget")
+            logger.debug(f"ProjectileWidget updated at pos: {self.pos}, size: {self.size}")
         except Exception as e:
             logger.error(f"Lỗi trong ProjectileWidget.update: {e}")
 
     def on_size(self, instance, value):
         if value != (16, 16):
+            logger.warning(f"ProjectileWidget size changed to: {value}, resetting to (16, 16)")
             self.size = (16, 16)
 
-# === Game Screen ===
+
+# === GameScreen ===
 class GameScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.bg = Background()
         self.add_widget(self.bg)
-
         self.player = Ship(state(), movement_mode[0])
         self.player.rect.x = Window.width // 2 - 16
         self.player.rect.y = 50
+        logger.debug(f"Player initial pos set to: ({self.player.rect.x}, {self.player.rect.y})")
         self.player_widget = ShipWidget(self.player)
+        logger.debug(f"Player pos after widget creation: ({self.player.rect.x}, {self.player.rect.y})")
         self.add_widget(self.player_widget)
-
         self.enemies = [Enemy(100, 10, 10, "neutral")]
         self.enemies[0].rect.x = Window.width // 2 - 16
         self.enemies[0].rect.y = Window.height - 64
         self.enemy_widgets = [EnemyWidget(enemy) for enemy in self.enemies]
         for widget in self.enemy_widgets:
             self.add_widget(widget)
-
         self.ship_projectiles = pygame.sprite.Group()
         self.enemy_projectiles = pygame.sprite.Group()
         self.projectile_widgets = []
-
         self.keys = {}
         self.update_event = None
+        logger.debug("GameScreen initialized")
 
     def on_enter(self):
         Window.bind(on_key_down=self.on_key_down)
         Window.bind(on_key_up=self.on_key_up)
         self.update_event = Clock.schedule_interval(self.update, 1.0 / 60)
+        logger.debug("GameScreen: on_enter, bound key events and scheduled update")
 
     def on_leave(self):
         Window.unbind(on_key_down=self.on_key_down)
@@ -274,6 +325,7 @@ class GameScreen(Screen):
         if self.update_event:
             self.update_event.cancel()
             self.update_event = None
+        logger.debug("GameScreen: on_leave, unbound key events and unscheduled update")
 
     def on_key_down(self, window, key, scancode, codepoint, modifier):
         key_map = {
@@ -284,6 +336,9 @@ class GameScreen(Screen):
         if key in key_map:
             self.keys[key_map[key]] = True
             pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=key_map[key]))
+            logger.debug(f"Key down: {key_map[key]}, keys state: {self.keys}")
+        else:
+            logger.debug(f"Unmapped key down: {key}")
 
     def on_key_up(self, window, key, *args):
         key_map = {
@@ -294,35 +349,33 @@ class GameScreen(Screen):
         if key in key_map:
             self.keys[key_map[key]] = False
             pygame.event.post(pygame.event.Event(pygame.KEYUP, key=key_map[key]))
+            logger.debug(f"Key up: {key_map[key]}, keys state: {self.keys}")
+        else:
+            logger.debug(f"Unmapped key up: {key}")
 
     def update(self, dt):
         try:
             self.bg.update(dt)
             self.player_widget.update(dt)
-            if self.player.rect.bottom >= 1080:
-                self.player.rect.y = 1080
-
             if self.keys.get(pygame.K_SPACE):
                 self.player.shoot(self.ship_projectiles)
-            if self.keys.get(pygame.K_s) or self.keys.get(pygame.K_DOWN):
-                self.player.rect.y += self.player.speed
-
-            if self.keys.get(pygame.K_SPACE):
-                self.player.shoot(self.ship_projectiles)
-
+                logger.debug("Player shooting")
             for enemy, widget in zip(self.enemies[:], self.enemy_widgets[:]):
-                enemy.move_and_shoot(self.enemy_projectiles, (self.player.rect.centerx, self.player.rect.centery) if self.player.alive else None)
+                enemy.move_and_shoot(self.enemy_projectiles, (self.player.rect.centerx,
+                                                              self.player.rect.centery) if self.player.alive else None)
                 widget.update(dt)
                 if not enemy.alive:
                     self.remove_widget(widget)
                     self.enemy_widgets.remove(widget)
                     self.enemies.remove(enemy)
-
+                    logger.debug("Removed enemy widget")
             for proj in self.ship_projectiles.sprites()[:]:
                 if not hasattr(proj, 'widget') and proj.image:
                     proj.widget = ProjectileWidget(proj)
                     self.projectile_widgets.append(proj.widget)
                     self.add_widget(proj.widget)
+                    logger.debug(
+                        f"Added ship projectile widget at {proj.rect.x}, {proj.rect.y}, size: {proj.widget.size}")
                 if hasattr(proj, 'widget'):
                     proj.widget.update(dt)
                 if proj.rect.y < 0:
@@ -330,12 +383,14 @@ class GameScreen(Screen):
                     if hasattr(proj, 'widget'):
                         self.remove_widget(proj.widget)
                         self.projectile_widgets.remove(proj.widget)
-
+                        logger.debug("Removed ship projectile widget")
             for proj in self.enemy_projectiles.sprites()[:]:
                 if not hasattr(proj, 'widget') and proj.image:
                     proj.widget = ProjectileWidget(proj)
                     self.projectile_widgets.append(proj.widget)
                     self.add_widget(proj.widget)
+                    logger.debug(
+                        f"Added enemy projectile widget at {proj.rect.x}, {proj.rect.y}, size: {proj.widget.size}")
                 if hasattr(proj, 'widget'):
                     proj.widget.update(dt)
                 if proj.rect.y > Window.height:
@@ -343,7 +398,7 @@ class GameScreen(Screen):
                     if hasattr(proj, 'widget'):
                         self.remove_widget(proj.widget)
                         self.projectile_widgets.remove(proj.widget)
-
+                        logger.debug("Removed enemy projectile widget")
             for proj in self.ship_projectiles.sprites()[:]:
                 for enemy in self.enemies[:]:
                     if proj.rect.colliderect(enemy.rect):
@@ -352,7 +407,7 @@ class GameScreen(Screen):
                         if hasattr(proj, 'widget'):
                             self.remove_widget(proj.widget)
                             self.projectile_widgets.remove(proj.widget)
-
+                            logger.debug("Removed ship projectile widget after collision")
             for proj in self.enemy_projectiles.sprites()[:]:
                 if proj.rect.colliderect(self.player.hitbox) and not self.player.invincible:
                     self.player.take_damage(10)
@@ -360,8 +415,9 @@ class GameScreen(Screen):
                     if hasattr(proj, 'widget'):
                         self.remove_widget(proj.widget)
                         self.projectile_widgets.remove(proj.widget)
-
+                        logger.debug("Removed enemy projectile widget after collision")
             if not self.player.alive:
+                logger.debug("Player died, switching to game_over screen")
                 if self.manager.has_screen("game_over"):
                     game_over_screen = self.manager.get_screen("game_over")
                     game_over_screen.name_input.text = ""
@@ -371,6 +427,7 @@ class GameScreen(Screen):
                     logger.error("game_over screen not found in ScreenManager")
         except Exception as e:
             logger.error(f"Lỗi trong GameScreen.update: {e}")
+
 
 # === Game Over Screen ===
 class GameOverScreen(Screen):
@@ -396,6 +453,7 @@ class GameOverScreen(Screen):
             self.add_widget(self.background, index=0)
         except Exception as e:
             logger.error(f"Lỗi khi tải background bg2.png: {e}")
+        logger.debug("GameOverScreen initialized")
 
     def _update_rect(self, instance, value):
         self.rect.pos = instance.pos
@@ -407,12 +465,14 @@ class GameOverScreen(Screen):
             score = getattr(self, "score", 0)
             with open("score.txt", "a", encoding="utf-8") as f:
                 f.write(f"{name} {score}\n")
+            logger.debug(f"Score submitted: {name} {score}")
             if self.manager.has_screen("menu"):
                 self.manager.current = "menu"
             else:
                 logger.error("menu screen not found in ScreenManager")
         except Exception as e:
             logger.error(f"Lỗi trong submit_score: {e}")
+
 
 # === Info Screen ===
 class InfoScreen(Screen):
@@ -433,12 +493,15 @@ class InfoScreen(Screen):
         self.layout.add_widget(self.content_label)
         self.layout.add_widget(self.back_button)
         self.add_widget(self.layout)
+        logger.debug(f"InfoScreen initialized with title: {title}")
 
     def back_to_menu(self, instance):
         if self.manager.has_screen("menu"):
             self.manager.current = "menu"
+            logger.debug("InfoScreen: Back to menu")
         else:
             logger.error("menu screen not found in ScreenManager")
+
 
 # === Hover Behavior ===
 class HoverBehavior(object):
@@ -449,12 +512,16 @@ class HoverBehavior(object):
         self.register_event_type('on_enter')
         self.register_event_type('on_leave')
         Window.bind(mouse_pos=self.on_mouse_pos)
+        logger.debug(f"HoverBehavior initialized for {self.__class__.__name__}")
 
     def on_mouse_pos(self, *args):
         if not self.get_root_window():
+            logger.debug(f"HoverBehavior: No root window for {self.__class__.__name__}")
             return
         pos = args[1]
         inside = self.collide_point(*self.to_widget(*pos))
+        logger.debug(
+            f"HoverButton {getattr(self, 'text', 'unknown')}: Mouse at {pos}, local_pos {self.to_widget(*pos)}, widget pos {self.pos}, size {self.size}, inside {inside}")
         if self.hovered != inside:
             self.hovered = inside
             if inside:
@@ -463,17 +530,19 @@ class HoverBehavior(object):
                 self.dispatch('on_leave')
 
     def on_enter(self):
-        pass
+        logger.debug(f"HoverButton enter: {getattr(self, 'text', 'unknown')}")
 
     def on_leave(self):
-        pass
+        logger.debug(f"HoverButton leave: {getattr(self, 'text', 'unknown')}")
+
 
 class HoverButton(Button, HoverBehavior):
     def on_pos(self, instance, value):
-        pass
+        logger.debug(f"HoverButton {self.text}: Position updated to {value}")
 
     def on_size(self, instance, value):
-        pass
+        logger.debug(f"HoverButton {self.text}: Size updated to {value}")
+
 
 # === Guide Screen ===
 class GuideScreen(Screen):
@@ -554,6 +623,7 @@ class GuideScreen(Screen):
         self.add_widget(self.main_layout)
 
         self.update_page()
+        logger.debug("GuideScreen initialized")
 
     def load_sections(self):
         try:
@@ -584,6 +654,7 @@ class GuideScreen(Screen):
     def back_to_menu(self, instance):
         if self.manager.has_screen("menu"):
             self.manager.current = "menu"
+            logger.debug("GuideScreen: Back to menu")
         else:
             logger.error("menu screen not found in ScreenManager")
 
@@ -591,11 +662,13 @@ class GuideScreen(Screen):
         if self.page > 0:
             self.page -= 1
             self.update_page()
+            logger.debug(f"GuideScreen: Switched to page {self.page + 1}")
 
     def next_page(self, instance):
         if self.page < self.total_pages - 1:
             self.page += 1
             self.update_page()
+            logger.debug(f"GuideScreen: Switched to page {self.page + 1}")
 
     def update_page(self):
         try:
@@ -621,8 +694,10 @@ class GuideScreen(Screen):
             self.next_btn.disabled = self.page >= self.total_pages - 1
             self.page_label.text = f"Trang {self.page + 1}/{self.total_pages}"
             self.page_label.texture_update()
+            logger.debug(f"GuideScreen: Updated page {self.page + 1}")
         except Exception as e:
             logger.error(f"Lỗi trong GuideScreen.update_page: {e}")
+
 
 # === Score Screen ===
 class ScoreScreen(Screen):
@@ -640,7 +715,7 @@ class ScoreScreen(Screen):
             logger.error(f"Lỗi khi tải background bg2.png: {e}")
 
         self.text_layout_container = BoxLayout(orientation='vertical', size_hint=(1, None), height=400,
-                                               padding=(50, 50, 100, 300))
+                                             padding=(50, 50, 100, 300))
         self.text_layout = BoxLayout(orientation='vertical', spacing=30, size_hint_y=None)
         self.text_layout_container.add_widget(self.text_layout)
         self.add_widget(self.text_layout_container)
@@ -667,14 +742,14 @@ class ScoreScreen(Screen):
             color=(1, 1, 0, 1),
             size_hint_y=None,
             height=50,
-            halign='center',
+            halign='center',  # Fixed the halign value
             pos_hint={'top': 1}
         )
         self.add_widget(self.title_label)
 
         self.main_layout = BoxLayout(orientation='horizontal', padding=[0, 0, 0, 0], spacing=10)
         self.content_layout = BoxLayout(orientation='vertical', spacing=10, size_hint_x=0.5,
-                                        pos_hint={'center_x': 0.25})
+                                       pos_hint={'center_x': 0.25})
 
         self.nav_layout = BoxLayout(orientation='horizontal', size_hint=(1, None), height=50, spacing=20)
         self.prev_btn = Button(
@@ -719,6 +794,7 @@ class ScoreScreen(Screen):
         self.add_widget(self.main_layout)
 
         self.update_page()
+        logger.debug("ScoreScreen initialized")
 
     def load_scores(self):
         try:
@@ -748,6 +824,7 @@ class ScoreScreen(Screen):
     def back_to_menu(self, instance):
         if self.manager.has_screen("menu"):
             self.manager.current = "menu"
+            logger.debug("ScoreScreen: Back to menu")
         else:
             logger.error("menu screen not found in ScreenManager")
 
@@ -755,11 +832,13 @@ class ScoreScreen(Screen):
         if self.page > 0:
             self.page -= 1
             self.update_page()
+            logger.debug(f"ScoreScreen: Switched to page {self.page + 1}")
 
     def next_page(self, instance):
         if self.page < self.total_pages - 1:
             self.page += 1
             self.update_page()
+            logger.debug(f"ScoreScreen: Switched to page {self.page + 1}")
 
     def update_page(self):
         try:
@@ -793,8 +872,10 @@ class ScoreScreen(Screen):
             self.next_btn.disabled = self.page >= self.total_pages - 1
             self.page_label.text = f"Trang {self.page + 1}/{self.total_pages}"
             self.page_label.texture_update()
+            logger.debug(f"ScoreScreen: Updated page {self.page + 1}")
         except Exception as e:
             logger.error(f"Lỗi trong ScoreScreen.update_page: {e}")
+
 
 # === Menu Screen ===
 class MenuScreen(Screen):
@@ -822,6 +903,7 @@ class MenuScreen(Screen):
         menu_options = [
             ("Chơi", "choi"),
             ("Điểm cao nhất", "diem_cao_nhat"),
+            # ("Tốc độ", "toc_do"),
             ("Hướng dẫn tân thủ", "huong_dan_tan_thu"),
             ("Di chuyển", "di_chuyen"),
             ("Thoát", "thoat"),
@@ -844,16 +926,20 @@ class MenuScreen(Screen):
             btn.bind(on_enter=self.on_button_hover)
             btn.bind(on_leave=self.on_button_leave)
             self.layout.add_widget(btn)
+            logger.debug("MenuScreen created")
 
     def on_button_leave(self, instance):
         instance.color = (1, 1, 1, 1)
+        logger.debug(f"MenuScreen: Exit button {instance.text}")
 
     def on_button_hover(self, instance):
         instance.color = (1, 1, 0, 1)
+        logger.debug(f"MenuScreen: Hover button {instance.text}")
 
     def choi(self, *args):
         if self.manager.has_screen("game"):
             self.manager.current = "game"
+            logger.debug("MenuScreen: Switched to game screen")
         else:
             logger.error("game screen not found in ScreenManager")
 
@@ -861,25 +947,31 @@ class MenuScreen(Screen):
         if not self.manager.has_screen("score"):
             self.manager.add_widget(ScoreScreen(name="score"))
         self.manager.current = "score"
+        logger.debug("MenuScreen: Switched to score screen")
 
     # def toc_do(self, *args):
     #     if not self.manager.has_screen("info_speed"):
     #         self.manager.add_widget(InfoScreen("Tốc Độ", "Tốc độ: 60 FPS", name="info_speed"))
     #     self.manager.current = "info_speed"
+    #     logger.debug("MenuScreen: Switched to info_speed screen")
 
     def huong_dan_tan_thu(self, *args):
         if not self.manager.has_screen("guide"):
             self.manager.add_widget(GuideScreen(name="guide"))
         self.manager.current = "guide"
+        logger.debug("MenuScreen: Switched to guide screen")
 
     def di_chuyen(self, *args):
         if not self.manager.has_screen("info_move"):
             self.manager.add_widget(
                 InfoScreen("Cách Di Chuyển", "WASD hoặc mũi tên, Shift để tăng tốc.", name="info_move"))
         self.manager.current = "info_move"
+        logger.debug("MenuScreen: Switched to info_move screen")
 
     def thoat(self, *args):
+        logger.debug("MenuScreen: Exiting application")
         App.get_running_app().stop()
+
 
 # === SpaceMax App ===
 class SpaceMaxApp(App):
@@ -890,14 +982,18 @@ class SpaceMaxApp(App):
         sm.add_widget(GameScreen(name="game"))
         sm.add_widget(GameOverScreen(name="game_over"))
         sm.bind(on_current=self.on_screen_change)
+        logger.debug("SpaceMaxApp: ScreenManager initialized with menu, game, game_over")
+        Clock.schedule_interval(self.debug_clock, 0.1)
         return sm
 
     def debug_clock(self, dt):
-        pass
+        logger.debug("Clock event triggered")
 
     def on_screen_change(self, instance, value):
+        logger.debug(f"Screen changed to: {value}")
         if not instance.has_screen(value):
             logger.error(f"Attempted to switch to non-existent screen: {value}")
+
 
 if __name__ == "__main__":
     SpaceMaxApp().run()
